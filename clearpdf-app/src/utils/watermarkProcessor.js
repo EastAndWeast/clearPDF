@@ -1,13 +1,12 @@
 import * as pdfjs from 'pdfjs-dist';
-import { PDFDocument } from 'pdf-lib';
+import { jsPDF } from 'jspdf';
 import CVWorker from '../workers/cv.worker.js?worker';
 
 // 设置 PDF.js Worker
-// 使用更稳定的外部库直接引用
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 /**
- * 核心去水印处理器 - 极简稳健版
+ * 核心去水印处理器 - 采用 jsPDF 替代方案解决 pdf-lib Hash Bug
  */
 export const processPDF = async (file, config, onProgress) => {
     return new Promise(async (resolve, reject) => {
@@ -19,11 +18,12 @@ export const processPDF = async (file, config, onProgress) => {
             const pdf = await loadingTask.promise;
             const totalPages = pdf.numPages;
 
-            const outPdf = await PDFDocument.create();
+            // 初始化 jsPDF：'p' (portrait), 'pt' (points), [width, height]
+            let doc = null;
 
             for (let i = 1; i <= totalPages; i++) {
                 const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 });
+                const viewport = page.getViewport({ scale: 1.5 }); // 14.7MB 文件建议保持 1.5 以防浏览器内存溢出
 
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
@@ -33,9 +33,9 @@ export const processPDF = async (file, config, onProgress) => {
                 await page.render({ canvasContext: context, viewport }).promise;
                 const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
 
-                // 核心 Worker 处理
+                // OpenCV 图像修复处理
                 const processed = await new Promise((res, rej) => {
-                    const timeout = setTimeout(() => rej(new Error('处理超时')), 60000);
+                    const timeout = setTimeout(() => rej(new Error('核心算法响应超时，请尝试减小文件或页数')), 120000);
                     const handler = (e) => {
                         if (e.data.type === 'page_done') {
                             clearTimeout(timeout);
@@ -44,7 +44,7 @@ export const processPDF = async (file, config, onProgress) => {
                         } else if (e.data.success === false) {
                             clearTimeout(timeout);
                             worker.removeEventListener('message', handler);
-                            rej(new Error(e.data.error || '算法处理失败'));
+                            rej(new Error(e.data.error || '算法执行异常'));
                         }
                     };
                     worker.addEventListener('message', handler);
@@ -53,31 +53,39 @@ export const processPDF = async (file, config, onProgress) => {
 
                 context.putImageData(processed, 0, 0);
 
-                // --- 核心修复：规避 hashOriginal.toHex 错误 ---
-                // 直接将 Canvas 导出为 Uint8Array
-                const blob = await new Promise(r => canvas.toBlob(r, 'image/png', 0.8));
-                const buf = await blob.arrayBuffer();
-                const finalUint8 = new Uint8Array(buf);
+                // 使用 JPEG 压缩以优化 14.7MB 大文件的生成与内存占用
+                const finalImgData = canvas.toDataURL('image/jpeg', 0.85);
 
-                // 使用 embedPng 时的特殊处理，有些 PDF 可能在大批量快速处理时触发 Hashing 冲突
-                const img = await outPdf.embedPng(finalUint8);
+                const ptWidth = viewport.width * 0.75; // px 转 pt (约 0.75 比例)
+                const ptHeight = viewport.height * 0.75;
 
-                const pdfPage = outPdf.addPage([viewport.width, viewport.height]);
-                pdfPage.drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                if (i === 1) {
+                    doc = new jsPDF({
+                        orientation: ptWidth > ptHeight ? 'l' : 'p',
+                        unit: 'pt',
+                        format: [ptWidth, ptHeight]
+                    });
+                } else {
+                    doc.addPage([ptWidth, ptHeight], ptWidth > ptHeight ? 'l' : 'p');
+                }
+
+                // 核心修复：jsPDF 的 addImage 远比 pdf-lib 的嵌入逻辑更稳定
+                doc.addImage(finalImgData, 'JPEG', 0, 0, ptWidth, ptHeight, undefined, 'FAST');
 
                 if (onProgress) onProgress(i, totalPages);
+
+                // 显式清理内存
+                canvas.width = 0; canvas.height = 0;
             }
 
-            const pdfBytes = await outPdf.save();
-            const processedBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+            const processedBlob = doc.output('blob');
 
-            worker.terminate();
+            if (worker) worker.terminate();
             resolve({ success: true, processedBlob });
 
         } catch (err) {
             if (worker) worker.terminate();
-            console.error('Final processor error:', err);
-            // 抛出带有类名的详细错误，帮助定位是否依然是 pdf-lib 的问题
+            console.error('Assembly Error:', err);
             reject(new Error(`${err.name}: ${err.message}`));
         }
     });
