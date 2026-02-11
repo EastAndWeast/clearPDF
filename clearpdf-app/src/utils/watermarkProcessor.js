@@ -13,6 +13,24 @@ export const processPDF = async (file, config, onProgress) => {
         let worker = null;
         try {
             worker = new CVWorker();
+
+            // 1. 等待 OpenCV 引擎就绪信号 (关键修复)
+            await new Promise((res, rej) => {
+                const timeout = setTimeout(() => rej(new Error('OpenCV 引擎加载超时，请检查网络链接')), 45000);
+                const handler = (e) => {
+                    if (e.data.type === 'ready') {
+                        clearTimeout(timeout);
+                        worker.removeEventListener('message', handler);
+                        res();
+                    } else if (e.data.success === false) {
+                        clearTimeout(timeout);
+                        worker.removeEventListener('message', handler);
+                        rej(new Error(e.data.error));
+                    }
+                };
+                worker.addEventListener('message', handler);
+            });
+
             const arrayBuffer = await file.arrayBuffer();
             const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
             const pdf = await loadingTask.promise;
