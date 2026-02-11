@@ -56,8 +56,11 @@ export const processPDF = async (file, config, onProgress) => {
                 });
 
                 context.putImageData(processed, 0, 0);
-                const imgDataUrl = canvas.toDataURL('image/png');
-                const img = await outPdf.embedPng(imgDataUrl);
+
+                // 转换 Canvas 为 Blob 再到 ArrayBuffer，绕过 DataURL 可能引起的 Hashing 错误
+                const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+                const imgBuffer = await blob.arrayBuffer();
+                const img = await outPdf.embedPng(imgBuffer);
 
                 const pdfPage = outPdf.addPage([viewport.width, viewport.height]);
                 pdfPage.drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
