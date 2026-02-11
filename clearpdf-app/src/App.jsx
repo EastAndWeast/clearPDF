@@ -20,19 +20,7 @@ function App() {
   const startProcessing = async () => {
     setStatus('processing');
     try {
-      // 1. 上传到 Cloudflare R2 (暂存)
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-      const uploadData = await uploadRes.json();
-
-      if (!uploadData.success) throw new Error('上传失败');
-
-      // 2. 客户端 Wasm 处理
+      // 1. 直接进行客户端 Wasm 处理 (无需上传)
       const result = await processPDF(file, {
         type: configType,
         content: watermarkContent,
@@ -40,20 +28,10 @@ function App() {
       });
 
       if (result.success) {
-        // 3. 将处理后的文件回写给后端（模拟持久化到 R2）
-        const finalFormData = new FormData();
-        finalFormData.append('file', result.processedBlob, file.name);
-
-        const saveRes = await fetch(`/api/upload?key=${encodeURIComponent(result.downloadKey)}`, {
-          method: 'POST',
-          body: finalFormData
-        });
-        const saveData = await saveRes.json();
-
-        if (saveData.success) {
-          setDownloadUrl(`/api/download?key=${encodeURIComponent(result.downloadKey)}`);
-          setStatus('done');
-        }
+        // 2. 生成本地下载链接
+        const url = URL.createObjectURL(result.processedBlob);
+        setDownloadUrl(url);
+        setStatus('done');
       }
     } catch (err) {
       console.error(err);
@@ -63,8 +41,10 @@ function App() {
   };
 
   const reset = () => {
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     setFile(null);
     setStatus('idle');
+    setDownloadUrl('');
   };
 
   return (

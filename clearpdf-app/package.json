@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "preview:full": "npx wrangler pages dev ./dist --compatibility-date=2024-02-11 --r2=PDF_BUCKET=clearpdf-storage",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
