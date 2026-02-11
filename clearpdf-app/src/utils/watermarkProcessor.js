@@ -41,7 +41,10 @@ export const processPDF = async (file, config, onProgress) => {
 
             for (let i = 1; i <= totalPages; i++) {
                 const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 }); // 14.7MB 文件建议保持 1.5 以防浏览器内存溢出
+                // 针对大文件优化：如果文件超过 10MB，降低采样率以保证内存安全
+                const isLargeFile = file.size > 10 * 1024 * 1024;
+                const scale = isLargeFile ? 1.0 : 1.5;
+                const viewport = page.getViewport({ scale });
 
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');

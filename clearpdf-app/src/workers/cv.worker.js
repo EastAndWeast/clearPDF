@@ -1,12 +1,11 @@
 /**
- * cv.worker.js - 核心去水印算法 Worker (增强版)
+ * cv.worker.js - 核心去水印算法 Worker (稳定性增强版)
  */
 
 self.onerror = (e) => {
-    self.postMessage({ success: false, error: 'Worker Error: ' + e.message });
+    self.postMessage({ success: false, error: 'Worker Runtime Error: ' + e.message });
 };
 
-// 使用包含完整模块的 OpenCV.js 版本
 const OPENCV_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
 
 try {
@@ -27,34 +26,40 @@ self.onmessage = async (e) => {
     const { type, imageData, config } = e.data;
 
     if (type === 'process_page') {
+        let src, gray, mask, dst;
         try {
             if (!cv || !cv.Mat) {
                 throw new Error('OpenCV library not initialized');
             }
 
-            const src = cv.matFromImageData(imageData);
-            const dst = new cv.Mat();
-            const gray = new cv.Mat();
-            const mask = new cv.Mat();
+            // 1. 获取图像数据
+            src = cv.matFromImageData(imageData);
+            dst = new cv.Mat();
+            gray = new cv.Mat();
+            mask = new cv.Mat();
 
-            // 1. 转换为灰度图
+            // 2. 灰度与阈值识别
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-            // 2. 核心算法：识别高亮区域 (通常是浅色水印)
-            // 使用自适应阈值或固定高阈值以定位半透明水印
+            // 识别水印区域 (215-255 通常是文字水印所在的亮度区间)
             cv.threshold(gray, mask, 215, 255, cv.THRESH_BINARY);
 
-            // 3. 处理逻辑：
-            if (cv.inpaint) {
-                // A 方案：使用 Inpainting 修复 (效果最好)
-                cv.inpaint(src, mask, dst, 3, cv.INPAINT_TELEA);
-            } else {
-                // B 方案 (降级)：直接将遮罩区域变白
-                // 如果 OpenCV 裁剪版缺少 photo 模块，使用此方案保底
+            // 3. 执行去水印逻辑
+            try {
+                if (cv.inpaint) {
+                    cv.inpaint(src, mask, dst, 3, cv.INPAINT_TELEA);
+                } else {
+                    // 降级方案
+                    src.copyTo(dst);
+                    // RGBA 颜色，对于 RGBA 图片，Scalar 需要 4 个分量
+                    const white = new cv.Scalar(255, 255, 255, 255);
+                    dst.setTo(white, mask);
+                }
+            } catch (innerErr) {
+                console.warn('Inpaint failed, trying fallback...', innerErr);
                 src.copyTo(dst);
                 const white = new cv.Scalar(255, 255, 255, 255);
                 dst.setTo(white, mask);
-                console.warn('Worker: cv.inpaint missing, using white-out fallback');
             }
 
             const processedImageData = new ImageData(
@@ -63,9 +68,6 @@ self.onmessage = async (e) => {
                 dst.rows
             );
 
-            // 清理内存
-            src.delete(); gray.delete(); mask.delete(); dst.delete();
-
             self.postMessage({
                 success: true,
                 type: 'page_done',
@@ -73,8 +75,20 @@ self.onmessage = async (e) => {
             });
 
         } catch (err) {
-            console.error('Worker Algorithm Failure:', err);
-            self.postMessage({ success: false, error: err.message });
+            // 捕捉数值形式的 OpenCV 错误或其他异常
+            let errorMsg = '算法执行异常';
+            if (typeof err === 'number') {
+                errorMsg = `OpenCV Error Code: ${err}`;
+            } else if (err.message) {
+                errorMsg = err.message;
+            }
+            self.postMessage({ success: false, error: errorMsg });
+        } finally {
+            // 极其重要：强制销毁所有 Mat 防止内存溢出
+            if (src) src.delete();
+            if (gray) gray.delete();
+            if (mask) mask.delete();
+            if (dst) dst.delete();
         }
     }
 };
