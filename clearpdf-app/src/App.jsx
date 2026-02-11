@@ -17,18 +17,22 @@ function App() {
     }
   };
 
+  const [processingProgress, setProcessingProgress] = useState(0);
+
   const startProcessing = async () => {
     setStatus('processing');
+    setProcessingProgress(0);
     try {
-      // 1. 直接进行客户端 Wasm 处理 (无需上传)
+      // 1. 调用真实处理器，传入进度回调
       const result = await processPDF(file, {
         type: configType,
         content: watermarkContent,
         effect: processingEffect
+      }, (current, total) => {
+        setProcessingProgress(Math.round((current / total) * 100));
       });
 
       if (result.success) {
-        // 2. 生成本地下载链接
         const url = URL.createObjectURL(result.processedBlob);
         setDownloadUrl(url);
         setStatus('done');
@@ -131,7 +135,13 @@ function App() {
           <div className="card" style={styles.centerCard}>
             <Loader2 className="animate-spin" size={64} color="var(--color-primary)" />
             <h2 style={{ marginTop: '24px', color: 'var(--color-primary)' }}>正在深度扫描与处理...</h2>
-            <p style={{ marginTop: '8px', color: '#64748b' }}>这通常需要几秒钟，请稍候</p>
+            <div style={{ width: '100%', maxWidth: '300px', margin: '20px auto' }}>
+              <div style={{ height: '8px', background: '#f1f5f9', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${processingProgress}%`, background: '#0d9488', transition: 'width 0.3s' }}></div>
+              </div>
+              <p style={{ marginTop: '10px', fontWeight: 600, color: '#0d9488' }}>{processingProgress}%</p>
+            </div>
+            <p style={{ color: '#64748b' }}>正在移除水印像素，请稍候</p>
           </div>
         )}
 
