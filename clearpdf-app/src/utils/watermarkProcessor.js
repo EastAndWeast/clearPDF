@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf';
 import CVWorker from '../workers/cv.worker.js?worker';
 
 // 设置 PDF.js Worker
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
 
 /**
  * 核心去水印处理器 - 采用 jsPDF 替代方案解决 pdf-lib Hash Bug

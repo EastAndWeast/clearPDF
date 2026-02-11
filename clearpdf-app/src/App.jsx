@@ -55,7 +55,7 @@ function App() {
   return (
     <div className="container">
       <header>
-        <h1>ClearPDF</h1>
+        <h1>ClearPDF <span style={{ fontSize: '0.6rem', opacity: 0.5 }}>v1.0.4-fixed-assembly</span></h1>
         <p className="subtitle">简单的三步，彻底移除 PDF 水印</p>
       </header>
 
