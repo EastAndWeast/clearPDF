@@ -1,5 +1,5 @@
 /**
- * cv.worker.js - 核心去水印算法 Worker (稳定性增强版)
+ * cv.worker.js - 核心去水印算法 Worker (精准识别版)
  */
 
 self.onerror = (e) => {
@@ -9,12 +9,9 @@ self.onerror = (e) => {
 const OPENCV_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
 
 try {
-    console.log('Worker: Loading OpenCV full build...');
     self.importScripts(OPENCV_URL);
-
     if (cv) {
         cv['onRuntimeInitialized'] = () => {
-            console.log('Worker: OpenCV Full Engine Ready');
             self.postMessage({ type: 'ready' });
         };
     }
@@ -26,38 +23,50 @@ self.onmessage = async (e) => {
     const { type, imageData, config } = e.data;
 
     if (type === 'process_page') {
-        let src, gray, mask, dst;
+        let src, hsv, mask, maskColor, maskGray, dst;
         try {
             if (!cv || !cv.Mat) {
                 throw new Error('OpenCV library not initialized');
             }
 
-            // 1. 获取图像数据
             src = cv.matFromImageData(imageData);
-            dst = new cv.Mat();
-            gray = new cv.Mat();
+            dst = src.clone();
+            hsv = new cv.Mat();
+            maskColor = new cv.Mat();
+            maskGray = new cv.Mat();
             mask = new cv.Mat();
 
-            // 2. 灰度与阈值识别
+            // 1. 策略一：色彩锁定 (针对 NotebookLM 常见的青蓝色/深绿色水印)
+            cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB); // 先转 RGB
+            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV); // 再转 HSV
+
+            // 检测青蓝色系 (H: 80-100 对应青绿色)
+            let low = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [70, 40, 40, 0]);
+            let high = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [110, 255, 255, 255]);
+            cv.inRange(hsv, low, high, maskColor);
+            low.delete(); high.delete();
+
+            // 2. 策略二：亮度锁定 (针对浅灰色/半透明水印)
+            const gray = new cv.Mat();
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            // 降低阈值至 190 以捕获更深的水印，同时保留主要文字
+            cv.threshold(gray, maskGray, 190, 255, cv.THRESH_BINARY);
+            gray.delete();
 
-            // 识别水印区域 (215-255 通常是文字水印所在的亮度区间)
-            cv.threshold(gray, mask, 215, 255, cv.THRESH_BINARY);
+            // 3. 融合遮罩
+            cv.bitwise_or(maskColor, maskGray, mask);
 
-            // 3. 执行去水印逻辑
-            try {
-                if (cv.inpaint) {
-                    cv.inpaint(src, mask, dst, 3, cv.INPAINT_TELEA);
-                } else {
-                    // 降级方案
-                    src.copyTo(dst);
-                    // RGBA 颜色，对于 RGBA 图片，Scalar 需要 4 个分量
-                    const white = new cv.Scalar(255, 255, 255, 255);
-                    dst.setTo(white, mask);
-                }
-            } catch (innerErr) {
-                console.warn('Inpaint failed, trying fallback...', innerErr);
-                src.copyTo(dst);
+            // 4. 消除边缘噪点
+            let ksize = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+            cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, ksize);
+            ksize.delete();
+
+            // 5. 执行擦除
+            if (cv.inpaint) {
+                // 使用 Inpaint 修复，半径设为 3，效果最自然
+                cv.inpaint(src, mask, dst, 3, cv.INPAINT_TELEA);
+            } else {
+                // 保底：直接变白
                 const white = new cv.Scalar(255, 255, 255, 255);
                 dst.setTo(white, mask);
             }
@@ -75,18 +84,13 @@ self.onmessage = async (e) => {
             });
 
         } catch (err) {
-            // 捕捉数值形式的 OpenCV 错误或其他异常
-            let errorMsg = '算法执行异常';
-            if (typeof err === 'number') {
-                errorMsg = `OpenCV Error Code: ${err}`;
-            } else if (err.message) {
-                errorMsg = err.message;
-            }
+            let errorMsg = typeof err === 'number' ? `OpenCV Error: ${err}` : err.message;
             self.postMessage({ success: false, error: errorMsg });
         } finally {
-            // 极其重要：强制销毁所有 Mat 防止内存溢出
             if (src) src.delete();
-            if (gray) gray.delete();
+            if (hsv) hsv.delete();
+            if (maskColor) maskColor.delete();
+            if (maskGray) maskGray.delete();
             if (mask) mask.delete();
             if (dst) dst.delete();
         }
