@@ -38,8 +38,9 @@ function App() {
         setStatus('done');
       }
     } catch (err) {
-      console.error(err);
-      alert('处理失败，请重试');
+      console.error('[Detail Error]:', err);
+      // 将报错信息显示给用户以便截图诊断
+      alert(`处理失败: ${err.message || '未知错误'}\n请检查控制台获取更多信息。`);
       setStatus('idle');
     }
   };
